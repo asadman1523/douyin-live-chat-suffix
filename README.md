@@ -2,6 +2,9 @@
 
 一个轻量、高效的 Google Chrome 浏览器外掛，专门为 `live.douyin.com`（抖音直播网页版）设计。它能在您送出聊天訊息時，**自動在末尾加上指定的後綴**（例如 ` /西红柿` 或其他自訂文字），支援在控制面板中隨時開啟、關閉或修改後綴。
 
+
+從Chrome Store[下載](https://chromewebstore.google.com/detail/njjjholfogmchmcnnckmgbkmlmeahkim?authuser=0&hl=zh-TW)。
+
 ---
 
 ## 🌟 功能特點
