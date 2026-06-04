@@ -38,12 +38,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload to Chrome Web Store
-        uses: passmarked/action-chrome-publish@master
-        with:
-          app-id: ${{ secrets.CHROME_APP_ID }}
-          client-id: ${{ secrets.CHROME_CLIENT_ID }}
-          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          file-path: ./douyin-chat-suffix.zip
-        continue-on-error: true # Let it pass even if Chrome credentials are not set up yet
