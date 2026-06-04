@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "抖音直播发言自动后缀",
+  "version": "1.0",
+  "description": "在 live.douyin.com 发言送出时，自动加上自定义的后缀（例如：/西红柿）。",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://live.douyin.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}
