@@ -38,6 +38,28 @@
 
 ---
 
+## 🚀 CI/CD 自動化發佈 (GitHub Actions)
+
+本專案已設定 GitHub Actions 工作流（位於 `.github/workflows/release.yml`）。每當您推送（`git push`）程式碼至 `main` 分支時，系統將會：
+1. 自動讀取 `manifest.json` 中的版本號。
+2. 將所有必備外掛檔案壓縮為 `douyin-chat-suffix.zip`。
+3. **自動建立一個 GitHub Release**，並將 ZIP 壓縮包作為 Release 資源上傳。
+4. **自動部署與更新至 Chrome 線上應用程式商店**（需設定 API 密鑰）。
+
+### 設定 Chrome Web Store 自動發佈憑證
+
+若要啟用 Chrome 線上商店的自動發佈功能，您需要在 GitHub 專案的 **Settings -> Secrets and variables -> Actions** 中新增以下四個加密變數（Repository Secrets）：
+
+1. **`CHROME_APP_ID`**：您在 Chrome 開發者後台首次手動上傳外掛後產生的商品 ID（App ID）。
+2. **`CHROME_CLIENT_ID`**：Google Cloud Console 中設定的 OAuth 2.0 用戶端 ID。
+3. **`CHROME_CLIENT_SECRET`**：Google Cloud Console 中的用戶端密鑰。
+4. **`CHROME_REFRESH_TOKEN`**：獲取到的 Google OAuth2 Refresh Token。
+
+*(註：如果尚未設定這些金鑰，工作流依然會正常執行並成功建立 GitHub Release，僅會跳過 Chrome Store 部署步驟。)*
+
+---
+
 ## 📝 授權條款
 
 本專案採用 [MIT License](LICENSE) 授權條款。
+
