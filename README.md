@@ -25,7 +25,7 @@
 4. 將頁面右上角的 **「開發人員模式」** 切換為開啟。
 5. 點擊左上角的 **「載入已解壓的擴充程序」**。
 6. 選擇本專案資料夾，點擊「選擇資料夾」即可完成安裝。
-7. 前往 [live.douyin.com](https://live.douyin.com/) 直播間網頁並**重新整理頁面**，外掛即會生效。
+7. 前往 [抖音網頁版](https://www.douyin.com/) 或 [抖音直播](https://live.douyin.com/)，進入直播間後外掛即會生效，無需重新整理直播間。
 
 ---
 
@@ -38,6 +38,7 @@
 2. **`document.execCommand` 模擬輸入**：使用 `execCommand('insertText')` 插入後綴，此方法能觸發瀏覽器最底層的文字輸入，保留 Slate 內建的歷史紀錄鏈。
 3. **事件派發（Event Dispatching）**：手動派發 `beforeinput`、`input` 及 `change` 事件，通知 React 虛擬 DOM 更新節點樹。
 4. **事件攔截（Event Interception）**：在 DOM 捕獲階段（Capture Phase）監聽鍵盤與滑鼠點擊，確保在抖音原生發送邏輯執行前完成後綴追加與事件重發。
+5. **站內跳轉與子頁面支援**：腳本會從抖音首頁預先載入，並支援直播聊天區使用子 Frame 載入的情況，因此由首頁首次跳轉直播間時也能立即生效。
 
 ---
 
@@ -54,4 +55,3 @@
 
 
 本專案採用 [MIT License](LICENSE) 授權條款。
-
