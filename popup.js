@@ -1,13 +1,52 @@
 // 抖音直播发言自动后缀 Popup Settings
 document.addEventListener("DOMContentLoaded", () => {
+  const {
+    DEFAULT_SETTINGS,
+    SUFFIX_PRESETS,
+    normalizeCustomPresets,
+    normalizeSettings
+  } = globalThis.DouyinSuffixConfig;
   const enabledToggle = document.getElementById("enabled-toggle");
-  const suffixInput = document.getElementById("suffix-input");
+  const convertToggle = document.getElementById("convert-toggle");
+  const prefixSelect = document.getElementById("suffix-prefix");
+  const presetSelect = document.getElementById("suffix-preset");
+  const customPresetInput = document.getElementById("custom-preset-input");
+  const addPresetButton = document.getElementById("add-preset");
+  const deletePresetButton = document.getElementById("delete-preset");
   const suffixContainer = document.getElementById("suffix-container");
   const statusText = document.getElementById("status-text");
-
   let statusTimeout;
+  let customPresets = [];
+  const syncStorage = globalThis.chrome?.storage?.sync;
 
-  // 显示保存成功提示
+  function getStoredSettings(callback) {
+    if (syncStorage) {
+      syncStorage.get(null, callback);
+      return;
+    }
+
+    const previewSettings = JSON.parse(
+      localStorage.getItem("douyinSuffixPreview") || "{}"
+    );
+    callback(previewSettings);
+  }
+
+  function setStoredSettings(values, callback = () => {}) {
+    if (syncStorage) {
+      syncStorage.set(values, callback);
+      return;
+    }
+
+    const current = JSON.parse(
+      localStorage.getItem("douyinSuffixPreview") || "{}"
+    );
+    localStorage.setItem(
+      "douyinSuffixPreview",
+      JSON.stringify({ ...current, ...values })
+    );
+    callback();
+  }
+
   function showStatus() {
     statusText.classList.add("show");
     clearTimeout(statusTimeout);
@@ -16,45 +55,119 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 1500);
   }
 
-  // 加载初始设置
-  chrome.storage.sync.get({ enabled: true, suffix: " /西红柿" }, (items) => {
-    enabledToggle.checked = items.enabled;
-    suffixInput.value = items.suffix;
-    
-    // 如果未启用，则淡化后缀输入框
-    updateSuffixInputVisibility(items.enabled);
-  });
-
-  // 更新后缀输入框可用性
-  function updateSuffixInputVisibility(enabled) {
-    if (enabled) {
-      suffixContainer.style.opacity = "1";
-      suffixContainer.style.pointerEvents = "auto";
-      suffixInput.disabled = false;
-    } else {
-      suffixContainer.style.opacity = "0.4";
-      suffixContainer.style.pointerEvents = "none";
-      suffixInput.disabled = true;
-    }
+  function updateSuffixControls(enabled) {
+    suffixContainer.classList.toggle("disabled", !enabled);
+    prefixSelect.disabled = !enabled;
+    presetSelect.disabled = !enabled;
+    customPresetInput.disabled = !enabled;
+    addPresetButton.disabled = !enabled;
+    updateDeleteButton(enabled);
   }
 
-  // 监听启用开关改变
-  enabledToggle.addEventListener("change", () => {
-    const enabled = enabledToggle.checked;
-    updateSuffixInputVisibility(enabled);
-    chrome.storage.sync.set({ enabled: enabled }, () => {
-      showStatus();
+  function updateDeleteButton(enabled = enabledToggle.checked) {
+    deletePresetButton.disabled = !enabled ||
+      !customPresets.includes(presetSelect.value);
+  }
+
+  function renderPresetOptions(selectedValue) {
+    presetSelect.replaceChildren();
+
+    SUFFIX_PRESETS.forEach((preset) => {
+      presetSelect.append(new Option(preset, preset));
+    });
+
+    if (customPresets.length) {
+      const separator = new Option("----------------", "");
+      separator.disabled = true;
+      presetSelect.append(separator);
+
+      customPresets.forEach((preset) => {
+        presetSelect.append(new Option(preset, preset));
+      });
+    }
+
+    presetSelect.value = [...SUFFIX_PRESETS, ...customPresets].includes(selectedValue)
+      ? selectedValue
+      : DEFAULT_SETTINGS.suffixPreset;
+    updateDeleteButton();
+  }
+
+  function saveSetting(key, value) {
+    setStoredSettings({ [key]: value }, showStatus);
+  }
+
+  getStoredSettings((items) => {
+    const normalized = normalizeSettings(items);
+    enabledToggle.checked = normalized.enabled;
+    convertToggle.checked = normalized.convertToSimplified;
+    prefixSelect.value = normalized.suffixPrefix;
+    customPresets = normalized.customSuffixPresets;
+    renderPresetOptions(normalized.suffixPreset);
+    updateSuffixControls(normalized.enabled);
+
+    setStoredSettings(normalized, () => {
+      if (items.suffix !== undefined && syncStorage) {
+        syncStorage.remove("suffix");
+      }
     });
   });
 
-  // 监听后缀输入内容改变
-  let inputDebounce;
-  suffixInput.addEventListener("input", () => {
-    clearTimeout(inputDebounce);
-    inputDebounce = setTimeout(() => {
-      chrome.storage.sync.set({ suffix: suffixInput.value }, () => {
-        showStatus();
-      });
-    }, 300); // 300ms 防抖保存，避免频繁写入
+  enabledToggle.addEventListener("change", () => {
+    updateSuffixControls(enabledToggle.checked);
+    saveSetting("enabled", enabledToggle.checked);
+  });
+
+  convertToggle.addEventListener("change", () => {
+    saveSetting("convertToSimplified", convertToggle.checked);
+  });
+
+  prefixSelect.addEventListener("change", () => {
+    saveSetting("suffixPrefix", prefixSelect.value);
+  });
+
+  presetSelect.addEventListener("change", () => {
+    updateDeleteButton();
+    saveSetting("suffixPreset", presetSelect.value);
+  });
+
+  function addCustomPreset() {
+    const value = customPresetInput.value.trim();
+    if (!value) {
+      customPresetInput.focus();
+      return;
+    }
+
+    if (!SUFFIX_PRESETS.includes(value) && !customPresets.includes(value)) {
+      customPresets = normalizeCustomPresets([...customPresets, value]);
+    }
+
+    renderPresetOptions(value);
+    customPresetInput.value = "";
+    setStoredSettings({
+      customSuffixPresets: customPresets,
+      suffixPreset: presetSelect.value
+    }, showStatus);
+  }
+
+  addPresetButton.addEventListener("click", addCustomPreset);
+  customPresetInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addCustomPreset();
+    }
+  });
+
+  deletePresetButton.addEventListener("click", () => {
+    const selected = presetSelect.value;
+    if (!customPresets.includes(selected)) {
+      return;
+    }
+
+    customPresets = customPresets.filter((preset) => preset !== selected);
+    renderPresetOptions(DEFAULT_SETTINGS.suffixPreset);
+    setStoredSettings({
+      customSuffixPresets: customPresets,
+      suffixPreset: DEFAULT_SETTINGS.suffixPreset
+    }, showStatus);
   });
 });

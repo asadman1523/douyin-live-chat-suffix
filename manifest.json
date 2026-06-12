@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "抖音直播发言自动后缀",
-  "version": "1.1",
-  "description": "在 live.douyin.com 发言送出时，自动加上自定义的后缀（例如：/西红柿）。",
+  "version": "1.2",
+  "description": "在抖音直播发言送出时自动添加预设后缀，并可在本机转换为简体中文。",
   "permissions": [
     "storage"
   ],
@@ -26,6 +26,8 @@
         "https://live.douyin.com/*"
       ],
       "js": [
+        "vendor/opencc-js/t2cn.js",
+        "settings.js",
         "content.js"
       ],
       "run_at": "document_start",

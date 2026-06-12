@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>Content Script Harness</title>
+</head>
+<body>
+  <div id="editor" data-slate-editor="true" contenteditable="true">
+    <div data-slate-node="element">
+      <span data-slate-node="text">
+        <span data-slate-leaf="true">
+          <span data-slate-string="true">寶寶</span>
+        </span>
+      </span>
+    </div>
+  </div>
+  <button type="button" data-e2e="chat-send-btn">傳送</button>
+  <output id="result"></output>
+
+  <script>
+    globalThis.chrome = {
+      storage: {
+        sync: {
+          get(_keys, callback) {
+            callback({
+              enabled: true,
+              suffixPrefix: "(",
+              suffixPreset: "13",
+              customSuffixPresets: [],
+              convertToSimplified: true
+            });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+
+    document.querySelector("button").addEventListener("click", () => {
+      const editor = document.getElementById("editor");
+      document.getElementById("result").textContent = JSON.stringify({
+        text: editor.textContent,
+        emojiCount: editor.querySelectorAll("img").length
+      });
+    });
+  </script>
+  <script src="../vendor/opencc-js/t2cn.js"></script>
+  <script src="../settings.js"></script>
+  <script src="../content.js"></script>
+</body>
+</html>

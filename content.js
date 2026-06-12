@@ -1,174 +1,447 @@
 // 抖音直播发言自动后缀 Content Script
-console.log("[Douyin Suffix Helper] Content script loaded.");
 
-let isEnabled = true;
-let chatSuffix = " /西红柿";
+const {
+  buildSuffix,
+  normalizeSettings
+} = globalThis.DouyinSuffixConfig;
 
-// 从存储加载设置
-chrome.storage.sync.get(["enabled", "suffix"], (data) => {
-  if (data.enabled !== undefined) {
-    isEnabled = data.enabled;
-  }
-  if (data.suffix !== undefined) {
-    chatSuffix = data.suffix;
-  }
-  console.log("[Douyin Suffix Helper] Initial settings loaded:", { isEnabled, chatSuffix });
+const toSimplified = globalThis.OpenCC.Converter({ from: "t", to: "cn" });
+let rawSettings = {};
+let settings = normalizeSettings(rawSettings);
+let isSending = false;
+const redispatchedEvents = new WeakSet();
+
+chrome.storage.sync.get(null, (data) => {
+  rawSettings = data || {};
+  settings = normalizeSettings(rawSettings);
 });
 
-// 监听设置变化
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "sync") {
-    if (changes.enabled !== undefined) {
-      isEnabled = changes.enabled.newValue;
-    }
-    if (changes.suffix !== undefined) {
-      chatSuffix = changes.suffix.newValue;
-    }
-    console.log("[Douyin Suffix Helper] Settings updated:", { isEnabled, chatSuffix });
+  if (areaName !== "sync") {
+    return;
   }
+
+  Object.entries(changes).forEach(([key, change]) => {
+    if (change.newValue === undefined) {
+      delete rawSettings[key];
+    } else {
+      rawSettings[key] = change.newValue;
+    }
+  });
+
+  settings = normalizeSettings(rawSettings);
 });
 
-// 获取编辑器元素
 function getEditor() {
   return document.querySelector('[data-slate-editor="true"]') ||
          document.querySelector('[contenteditable="true"]');
 }
 
-// 获取发送按钮元素
 function getSendButton() {
-  return document.querySelector('.webcast-chatroom___send-btn') ||
+  return document.querySelector(".webcast-chatroom___send-btn") ||
          document.querySelector('[data-e2e="chat-send-btn"]');
 }
 
-// 递归获取编辑器内的完整文本（包含表情图片的 alt/title 属性）
+// Includes emoji image labels when checking whether the editor has content.
 function getEditorText(editor) {
   let text = "";
+
   function traverse(node) {
     if (node.nodeType === Node.TEXT_NODE) {
       text += node.textContent;
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.tagName === 'IMG') {
-        // 抖音的表情包通常是 img 標籤，用 alt 或 title 儲存文字表示（例如 "[西瓜]"）
-        text += node.getAttribute('alt') || node.getAttribute('title') || '';
-      } else {
-        for (let child of node.childNodes) {
-          traverse(child);
-        }
-      }
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+
+    if (node.tagName === "IMG") {
+      text += node.getAttribute("alt") || node.getAttribute("title") || "";
+      return;
+    }
+
+    for (const child of node.childNodes) {
+      traverse(child);
     }
   }
+
   traverse(editor);
   return text;
 }
 
-// 附加后缀并发送
-function appendSuffixAndSend(editor, suffix) {
-  console.log("[Douyin Suffix Helper] Appending suffix:", JSON.stringify(suffix));
-  editor.focus();
+function getTextNodes(editor) {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
 
-  // 选择文本末尾
+  while ((node = walker.nextNode())) {
+    nodes.push(node);
+  }
+
+  return nodes;
+}
+
+function hasTraditionalText(editor) {
+  return getTextNodes(editor).some((node) => {
+    const value = node.nodeValue || "";
+    return toSimplified(value) !== value;
+  });
+}
+
+function getTextNodeSnapshot(editor) {
+  return getTextNodes(editor)
+    .map((node) => node.nodeValue || "")
+    .join("\u0000");
+}
+
+function replaceTextRange(node, startOffset, endOffset, value) {
+  const range = document.createRange();
+  range.setStart(node, startOffset);
+  range.setEnd(node, endOffset);
+
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  return document.execCommand("insertText", false, value);
+}
+
+function waitForEditorUpdate() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(resolve, 20);
+      });
+    });
+  });
+}
+
+async function replaceEditorText(editor, value) {
+  const textNodes = getTextNodes(editor).filter((node) => {
+    return (node.nodeValue || "").replace(/\u200b/g, "").length > 0;
+  });
+  if (!textNodes.length) {
+    console.error("[Douyin Suffix Helper] No Slate text nodes found.");
+    return false;
+  }
+
+  const firstNode = textNodes[0];
+  const lastNode = textNodes[textNodes.length - 1];
+  const range = document.createRange();
+  range.setStart(firstNode, 0);
+  range.setEnd(lastNode, (lastNode.nodeValue || "").length);
+
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  // Slate keeps its own selection model. Give its selectionchange listener time
+  // to observe the browser range before issuing the native replacement.
+  await waitForEditorUpdate();
+
+  return document.execCommand("insertText", false, value);
+}
+
+function findLastConversion(editor) {
+  const nodes = getTextNodes(editor);
+
+  for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
+    const node = nodes[nodeIndex];
+    const value = node.nodeValue || "";
+    const characters = Array.from(value);
+
+    for (let characterIndex = characters.length - 1;
+      characterIndex >= 0;
+      characterIndex -= 1) {
+      const original = characters[characterIndex];
+      const converted = toSimplified(original);
+      if (converted === original) {
+        continue;
+      }
+
+      const startOffset = characters
+        .slice(0, characterIndex)
+        .join("")
+        .length;
+
+      return {
+        node,
+        startOffset,
+        endOffset: startOffset + original.length,
+        original,
+        converted
+      };
+    }
+  }
+
+  return null;
+}
+
+// Replacing a complete Slate text node can be partially reverted by React.
+// Convert one character from the end at a time and verify every mutation.
+async function convertEditorText(editor) {
+  for (let replacements = 0; replacements < 500; replacements += 1) {
+    const conversion = findLastConversion(editor);
+    if (!conversion) {
+      return true;
+    }
+
+    const beforeSnapshot = getTextNodeSnapshot(editor);
+    if (!replaceTextRange(
+      conversion.node,
+      conversion.startOffset,
+      conversion.endOffset,
+      conversion.converted
+    )) {
+      console.error("[Douyin Suffix Helper] Browser rejected text conversion.");
+      return false;
+    }
+
+    await waitForEditorUpdate();
+    if (getTextNodeSnapshot(editor) === beforeSnapshot) {
+      console.error("[Douyin Suffix Helper] Editor did not accept text conversion.");
+      return false;
+    }
+  }
+
+  return !hasTraditionalText(editor);
+}
+
+function placeCursorAtEnd(editor) {
   const range = document.createRange();
   range.selectNodeContents(editor);
-  range.collapse(false); // 折叠到末尾
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
+  range.collapse(false);
 
-  // 插入后缀文字
-  document.execCommand('insertText', false, suffix);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
 
-  // 派发事件，确保 React / Slate.js 状态更新，并使发送按钮可用
-  editor.dispatchEvent(new Event('input', { bubbles: true }));
-  editor.dispatchEvent(new Event('change', { bubbles: true }));
-  editor.dispatchEvent(new InputEvent('beforeinput', {
+function appendSuffix(editor, suffix) {
+  placeCursorAtEnd(editor);
+  return document.execCommand("insertText", false, suffix);
+}
+
+function editorEndsWith(editor, suffix) {
+  return getEditorText(editor)
+    .replace(/\u200b/g, "")
+    .trim()
+    .endsWith(suffix.trim());
+}
+
+function normalizeEditorText(value) {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/\u200b/g, "")
+    .trim();
+}
+
+function dispatchEditorChange(editor) {
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertText",
+    data: null
+  }));
+  editor.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function dispatchSendButtonClick() {
+  const sendButton = getSendButton();
+  if (!sendButton) {
+    isSending = false;
+    console.error("[Douyin Suffix Helper] Send button not found.");
+    return;
+  }
+
+  const rect = sendButton.getBoundingClientRect();
+  const options = {
     bubbles: true,
     cancelable: true,
-    inputType: 'insertText'
-  }));
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2
+  };
+  const events = [
+    new PointerEvent("pointerdown", options),
+    new MouseEvent("mousedown", options),
+    new PointerEvent("pointerup", options),
+    new MouseEvent("mouseup", options),
+    new MouseEvent("click", options)
+  ];
 
-  console.log("[Douyin Suffix Helper] Events dispatched. Triggering click in 50ms...");
-
-  // 延迟一小段时间派發滑鼠/指針事件序列來點擊發送按鈕
-  setTimeout(() => {
-    const sendBtn = getSendButton();
-    if (sendBtn) {
-      console.log("[Douyin Suffix Helper] Triggering full mouse event sequence on send button.");
-      
-      const rect = sendBtn.getBoundingClientRect();
-      const clientX = rect.left + rect.width / 2;
-      const clientY = rect.top + rect.height / 2;
-      const opts = { bubbles: true, cancelable: true, clientX, clientY };
-      
-      // 派發完整的指標和滑鼠事件流，確保 React 的 SyntheticEvent 能正確捕捉
-      sendBtn.dispatchEvent(new PointerEvent('pointerdown', opts));
-      sendBtn.dispatchEvent(new MouseEvent('mousedown', opts));
-      sendBtn.dispatchEvent(new PointerEvent('pointerup', opts));
-      sendBtn.dispatchEvent(new MouseEvent('mouseup', opts));
-      sendBtn.dispatchEvent(new MouseEvent('click', opts));
-    } else {
-      console.error("[Douyin Suffix Helper] Send button not found during programmatic click.");
-    }
-  }, 50);
+  events.forEach((event) => {
+    redispatchedEvents.add(event);
+    sendButton.dispatchEvent(event);
+  });
+  isSending = false;
 }
 
-// 1. 拦截回车键发送
-window.addEventListener('keydown', (event) => {
-  if (!isEnabled) return;
-  
-  if (event.key === 'Enter' && !event.shiftKey) {
-    const editor = getEditor();
-    if (editor && (event.target === editor || editor.contains(event.target))) {
-      if (event.isComposing) {
-        console.log("[Douyin Suffix Helper] Enter key ignored due to active IME composition.");
-        return;
-      }
-      
-      // 移除零宽空格并去除首尾空格
-      const text = getEditorText(editor).replace(/\u200b/g, '').trim();
-      const targetSuffix = chatSuffix;
-      
-      console.log("[Douyin Suffix Helper] Keydown intercepted. Current text:", JSON.stringify(text));
-      
-      // 如果输入框有内容，且内容不以指定的后缀结尾，则进行拦截与追加
-      if (text && !text.endsWith(targetSuffix.trim())) {
-        event.preventDefault();
-        event.stopPropagation();
-        appendSuffixAndSend(editor, targetSuffix);
-      } else {
-        console.log("[Douyin Suffix Helper] Suffix already present or empty. Letting event pass.");
-      }
+function getPreparationPlan(editor) {
+  const currentText = getEditorText(editor).replace(/\u200b/g, "").trim();
+  if (!currentText) {
+    return null;
+  }
+
+  const suffix = buildSuffix(settings);
+  const outgoingSuffix = settings.convertToSimplified ? toSimplified(suffix) : suffix;
+  const comparableText = settings.convertToSimplified
+    ? toSimplified(currentText)
+    : currentText;
+  const needsConversion = settings.convertToSimplified && hasTraditionalText(editor);
+  const needsSuffix = settings.enabled &&
+    !comparableText.endsWith(outgoingSuffix.trim());
+
+  return {
+    currentText,
+    needsConversion,
+    needsSuffix,
+    outgoingSuffix,
+    finalText: `${settings.convertToSimplified
+      ? toSimplified(currentText)
+      : currentText}${needsSuffix ? outgoingSuffix : ""}`
+  };
+}
+
+async function prepareAndSend(editor, plan) {
+  if (!plan || (!plan.needsConversion && !plan.needsSuffix)) {
+    return false;
+  }
+
+  isSending = true;
+  editor.focus();
+
+  const hasImageContent = Boolean(editor.querySelector("img"));
+
+  // A single native edit is the most reliable way to update Slate's internal
+  // value. Use it for normal text messages so conversion and suffix insertion
+  // cannot be split across competing React updates.
+  if (!hasImageContent && (plan.needsConversion || plan.needsSuffix)) {
+    if (!await replaceEditorText(editor, plan.finalText)) {
+      isSending = false;
+      console.error("[Douyin Suffix Helper] Browser rejected message replacement.");
+      return false;
+    }
+
+    await waitForEditorUpdate();
+    await waitForEditorUpdate();
+
+    if (normalizeEditorText(getEditorText(editor)) !==
+        normalizeEditorText(plan.finalText)) {
+      isSending = false;
+      console.error("[Douyin Suffix Helper] Editor did not accept final message.");
+      return false;
+    }
+  } else if (plan.needsConversion) {
+    const converted = await convertEditorText(editor);
+    if (!converted) {
+      isSending = false;
+      return false;
     }
   }
-}, true); // 使用捕获阶段以在抖音原生监听器之前处理
 
-// 處理傳送按鈕的觸發事件（mousedown、pointerdown、click）
-function handleSendButtonEvent(event) {
-  if (!isEnabled) return;
-
-  const sendBtn = getSendButton();
-  if (sendBtn && (event.target === sendBtn || sendBtn.contains(event.target))) {
-    const editor = getEditor();
-    if (editor) {
-      const text = getEditorText(editor).replace(/\u200b/g, '').trim();
-      const targetSuffix = chatSuffix;
-
-      console.log(`[Douyin Suffix Helper] Send event (${event.type}) intercepted. Current text:`, JSON.stringify(text));
-
-      // 如果输入框有內容，且不以指定后缀结尾，则拦截事件，追加后缀，然後重新派發事件流
-      if (text && !text.endsWith(targetSuffix.trim())) {
-        event.preventDefault();
-        event.stopPropagation();
-        appendSuffixAndSend(editor, targetSuffix);
-      } else {
-        console.log(`[Douyin Suffix Helper] Event (${event.type}) let pass (suffix present, empty, or event recursion).`);
-      }
+  if (hasImageContent && plan.needsSuffix) {
+    if (!appendSuffix(editor, plan.outgoingSuffix)) {
+      isSending = false;
+      console.error("[Douyin Suffix Helper] Browser rejected suffix insertion.");
+      return false;
     }
+    await waitForEditorUpdate();
+    if (!editorEndsWith(editor, plan.outgoingSuffix)) {
+      isSending = false;
+      console.error("[Douyin Suffix Helper] Editor did not accept the suffix.");
+      return false;
+    }
+  }
+
+  dispatchEditorChange(editor);
+  await waitForEditorUpdate();
+
+  if (settings.convertToSimplified && hasTraditionalText(editor)) {
+    isSending = false;
+    console.error("[Douyin Suffix Helper] Traditional text remained before send.");
+    return false;
+  }
+
+  setTimeout(dispatchSendButtonClick, 300);
+  return true;
+}
+
+window.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter" || event.shiftKey) {
+    return;
+  }
+
+  const editor = getEditor();
+  if (!editor ||
+      !getSendButton() ||
+      (event.target !== editor && !editor.contains(event.target))) {
+    return;
+  }
+
+  if (event.isComposing) {
+    return;
+  }
+
+  if (isSending) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+
+  const plan = getPreparationPlan(editor);
+  if (!plan || (!plan.needsConversion && !plan.needsSuffix)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  const handled = await prepareAndSend(editor, plan);
+  if (!handled) {
+    isSending = false;
+    console.error("[Douyin Suffix Helper] Message preparation failed.");
+  }
+}, true);
+
+async function handleSendButtonEvent(event) {
+  if (redispatchedEvents.has(event)) {
+    return;
+  }
+
+  const sendButton = getSendButton();
+  if (!sendButton ||
+      (event.target !== sendButton && !sendButton.contains(event.target))) {
+    return;
+  }
+
+  const editor = getEditor();
+  if (!editor) {
+    return;
+  }
+
+  if (isSending) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+
+  const plan = getPreparationPlan(editor);
+  if (!plan || (!plan.needsConversion && !plan.needsSuffix)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  const handled = await prepareAndSend(editor, plan);
+  if (!handled) {
+    isSending = false;
+    console.error("[Douyin Suffix Helper] Message preparation failed.");
   }
 }
 
-// 2. 攔截點擊發送按鈕（滑鼠點擊可能觸發不同階段的事件）
-window.addEventListener('pointerdown', handleSendButtonEvent, true);
-window.addEventListener('mousedown', handleSendButtonEvent, true);
-window.addEventListener('click', handleSendButtonEvent, true);
-
-
+window.addEventListener("pointerdown", handleSendButtonEvent, true);
+window.addEventListener("mousedown", handleSendButtonEvent, true);
+window.addEventListener("click", handleSendButtonEvent, true);
