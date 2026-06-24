@@ -89,181 +89,41 @@ function hasTraditionalText(editor) {
   });
 }
 
-function getTextNodeSnapshot(editor) {
-  return getTextNodes(editor)
-    .map((node) => node.nodeValue || "")
-    .join("\u0000");
-function safePasteText(target, value) {
-  console.log(`[Douyin Suffix Helper] safePasteText called with value: "${value}"`);
-  const dataTransfer = new DataTransfer();
-  dataTransfer.setData("text/plain", value);
-  const pasteEvent = new ClipboardEvent("paste", {
-    bubbles: true,
-    cancelable: true,
-    clipboardData: dataTransfer
-  });
-
-  if (target.dispatchEvent(pasteEvent)) {
-    console.log("[Douyin Suffix Helper] paste event NOT canceled, calling execCommand");
-    return document.execCommand("insertText", false, value);
-  }
-
-  console.log("[Douyin Suffix Helper] paste event canceled by Slate, assuming successful intercept");
-  return true;
-}
-
-async function replaceTextRange(node, startOffset, endOffset, value) {
-  console.log(`[Douyin Suffix Helper] replaceTextRange: replacing offset ${startOffset}-${endOffset} with "${value}"`);
-  const range = document.createRange();
-  range.setStart(node, startOffset);
-  range.setEnd(node, endOffset);
-
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-
-  console.log("[Douyin Suffix Helper] Waiting for Slate to sync selection...");
-  await waitForEditorUpdate();
-  console.log("[Douyin Suffix Helper] Slate sync done. Calling safePasteText...");
-
-  return safePasteText(node, value);
-}
 
 function waitForEditorUpdate() {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setTimeout(resolve, 20);
-      });
+      requestAnimationFrame(resolve);
     });
   });
 }
 
+function safeInsertText(target, value) {
+  const inputEvent = new InputEvent("beforeinput", {
+    bubbles: true,
+    cancelable: true,
+    inputType: "insertText",
+    data: value
+  });
+
+  if (target.dispatchEvent(inputEvent)) {
+    return document.execCommand("insertText", false, value);
+  }
+
+  return true;
+}
+
 async function replaceEditorText(editor, value) {
-  console.log("[Douyin Suffix Helper] replaceEditorText called.");
   const range = document.createRange();
-  // Using element-level selection to bypass Slate's text node offset bug with surrogate pairs
   range.selectNodeContents(editor);
 
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
 
-  // Slate keeps its own selection model. Give its selectionchange listener time
-  // to observe the browser range before issuing the native replacement.
   await waitForEditorUpdate();
 
-  return safePasteText(editor, value);
-}
-
-function findLastConversion(editor) {
-  const nodes = getTextNodes(editor);
-
-  for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
-    const node = nodes[nodeIndex];
-    const value = node.nodeValue || "";
-    const characters = Array.from(value);
-
-    for (let characterIndex = characters.length - 1;
-      characterIndex >= 0;
-      characterIndex -= 1) {
-      const original = characters[characterIndex];
-      const converted = toSimplified(original);
-      if (converted === original) {
-        continue;
-      }
-
-      const startOffset = characters
-        .slice(0, characterIndex)
-        .join("")
-        .length;
-
-      return {
-        node,
-        startOffset,
-        endOffset: startOffset + original.length,
-        original,
-        converted
-      };
-    }
-  }
-
-  return null;
-}
-
-// Replacing a complete Slate text node can be partially reverted by React.
-// Convert one character from the end at a time and verify every mutation.
-async function convertEditorText(editor) {
-  console.log("[Douyin Suffix Helper] convertEditorText started.");
-  for (let replacements = 0; replacements < 500; replacements += 1) {
-    const conversion = findLastConversion(editor);
-    if (!conversion) {
-      console.log("[Douyin Suffix Helper] No more conversions found.");
-      return true;
-    }
-
-    console.log(`[Douyin Suffix Helper] Found conversion: "${conversion.original}" -> "${conversion.converted}" at ${conversion.startOffset}`);
-    const beforeSnapshot = getTextNodeSnapshot(editor);
-    console.log("[Douyin Suffix Helper] Snapshot before conversion:", beforeSnapshot);
-    if (!await replaceTextRange(
-      conversion.node,
-      conversion.startOffset,
-      conversion.endOffset,
-      conversion.converted
-    )) {
-      console.error("[Douyin Suffix Helper] Browser rejected text conversion.");
-      return false;
-    }
-
-    await waitForEditorUpdate();
-    const afterSnapshot = getTextNodeSnapshot(editor);
-    console.log("[Douyin Suffix Helper] Snapshot after conversion:", afterSnapshot);
-    
-    if (afterSnapshot === beforeSnapshot) {
-      console.error("[Douyin Suffix Helper] Editor did not accept text conversion.");
-      return false;
-    }
-  }
-
-  return !hasTraditionalText(editor);
-}
-
-function placeCursorAtEnd(editor) {
-  const range = document.createRange();
-  range.selectNodeContents(editor);
-  range.collapse(false);
-
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-function appendSuffix(editor, suffix) {
-  placeCursorAtEnd(editor);
-  return safePasteText(editor, suffix);
-}
-
-function editorEndsWith(editor, suffix) {
-  return getEditorText(editor)
-    .replace(/\u200b/g, "")
-    .trim()
-    .endsWith(suffix.trim());
-}
-
-function normalizeEditorText(value) {
-  return value
-    .replace(/\u00a0/g, " ")
-    .replace(/\u200b/g, "")
-    .trim();
-}
-
-function dispatchEditorChange(editor) {
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertText",
-    data: null
-  }));
-  editor.dispatchEvent(new Event("change", { bubbles: true }));
+  return safeInsertText(editor, value);
 }
 
 function dispatchSendButtonClick() {
@@ -298,7 +158,6 @@ function dispatchSendButtonClick() {
 
 function getPreparationPlan(editor) {
   const currentText = getEditorText(editor).replace(/\u200b/g, "").trim();
-  console.log("[Douyin Suffix Helper] User input detected:", currentText);
   if (!currentText) {
     return null;
   }
@@ -331,57 +190,14 @@ async function prepareAndSend(editor, plan) {
   isSending = true;
   editor.focus();
 
-  const hasImageContent = Boolean(editor.querySelector("img"));
-
-  // A single native edit is the most reliable way to update Slate's internal
-  // value. Use it for normal text messages so conversion and suffix insertion
-  // cannot be split across competing React updates.
-  if (!hasImageContent && (plan.needsConversion || plan.needsSuffix)) {
-    if (!await replaceEditorText(editor, plan.finalText)) {
-      isSending = false;
-      console.error("[Douyin Suffix Helper] Browser rejected message replacement.");
-      return false;
-    }
-
-    await waitForEditorUpdate();
-    await waitForEditorUpdate();
-
-    if (normalizeEditorText(getEditorText(editor)) !==
-        normalizeEditorText(plan.finalText)) {
-      isSending = false;
-      console.error("[Douyin Suffix Helper] Editor did not accept final message.");
-      return false;
-    }
-  } else if (plan.needsConversion) {
-    const converted = await convertEditorText(editor);
-    if (!converted) {
-      isSending = false;
-      return false;
-    }
-  }
-
-  if (hasImageContent && plan.needsSuffix) {
-    if (!appendSuffix(editor, plan.outgoingSuffix)) {
-      isSending = false;
-      console.error("[Douyin Suffix Helper] Browser rejected suffix insertion.");
-      return false;
-    }
-    await waitForEditorUpdate();
-    if (!editorEndsWith(editor, plan.outgoingSuffix)) {
-      isSending = false;
-      console.error("[Douyin Suffix Helper] Editor did not accept the suffix.");
-      return false;
-    }
-  }
-
-  dispatchEditorChange(editor);
-  await waitForEditorUpdate();
-
-  if (settings.convertToSimplified && hasTraditionalText(editor)) {
+  if (!await replaceEditorText(editor, plan.finalText)) {
     isSending = false;
-    console.error("[Douyin Suffix Helper] Traditional text remained before send.");
+    console.error("[Douyin Suffix Helper] Browser rejected message replacement.");
     return false;
   }
+
+  await waitForEditorUpdate();
+  await waitForEditorUpdate();
 
   setTimeout(dispatchSendButtonClick, 300);
   return true;
