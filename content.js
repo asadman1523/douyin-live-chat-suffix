@@ -93,23 +93,22 @@ function getTextNodeSnapshot(editor) {
   return getTextNodes(editor)
     .map((node) => node.nodeValue || "")
     .join("\u0000");
-}
-
-function safeInsertText(target, value) {
-  console.log(`[Douyin Suffix Helper] safeInsertText called with value: "${value}"`);
-  const inputEvent = new InputEvent("beforeinput", {
+function safePasteText(target, value) {
+  console.log(`[Douyin Suffix Helper] safePasteText called with value: "${value}"`);
+  const dataTransfer = new DataTransfer();
+  dataTransfer.setData("text/plain", value);
+  const pasteEvent = new ClipboardEvent("paste", {
     bubbles: true,
     cancelable: true,
-    inputType: "insertText",
-    data: value
+    clipboardData: dataTransfer
   });
 
-  if (target.dispatchEvent(inputEvent)) {
-    console.log("[Douyin Suffix Helper] beforeinput event NOT canceled, calling execCommand");
+  if (target.dispatchEvent(pasteEvent)) {
+    console.log("[Douyin Suffix Helper] paste event NOT canceled, calling execCommand");
     return document.execCommand("insertText", false, value);
   }
 
-  console.log("[Douyin Suffix Helper] beforeinput event canceled by Slate, assuming successful intercept");
+  console.log("[Douyin Suffix Helper] paste event canceled by Slate, assuming successful intercept");
   return true;
 }
 
@@ -125,9 +124,9 @@ async function replaceTextRange(node, startOffset, endOffset, value) {
 
   console.log("[Douyin Suffix Helper] Waiting for Slate to sync selection...");
   await waitForEditorUpdate();
-  console.log("[Douyin Suffix Helper] Slate sync done. Calling safeInsertText...");
+  console.log("[Douyin Suffix Helper] Slate sync done. Calling safePasteText...");
 
-  return safeInsertText(node, value);
+  return safePasteText(node, value);
 }
 
 function waitForEditorUpdate() {
@@ -141,19 +140,10 @@ function waitForEditorUpdate() {
 }
 
 async function replaceEditorText(editor, value) {
-  const textNodes = getTextNodes(editor).filter((node) => {
-    return (node.nodeValue || "").replace(/\u200b/g, "").length > 0;
-  });
-  if (!textNodes.length) {
-    console.error("[Douyin Suffix Helper] No Slate text nodes found.");
-    return false;
-  }
-
-  const firstNode = textNodes[0];
-  const lastNode = textNodes[textNodes.length - 1];
+  console.log("[Douyin Suffix Helper] replaceEditorText called.");
   const range = document.createRange();
-  range.setStart(firstNode, 0);
-  range.setEnd(lastNode, (lastNode.nodeValue || "").length);
+  // Using element-level selection to bypass Slate's text node offset bug with surrogate pairs
+  range.selectNodeContents(editor);
 
   const selection = window.getSelection();
   selection.removeAllRanges();
@@ -163,7 +153,7 @@ async function replaceEditorText(editor, value) {
   // to observe the browser range before issuing the native replacement.
   await waitForEditorUpdate();
 
-  return safeInsertText(editor, value);
+  return safePasteText(editor, value);
 }
 
 function findLastConversion(editor) {
@@ -250,7 +240,7 @@ function placeCursorAtEnd(editor) {
 
 function appendSuffix(editor, suffix) {
   placeCursorAtEnd(editor);
-  return safeInsertText(editor, suffix);
+  return safePasteText(editor, suffix);
 }
 
 function editorEndsWith(editor, suffix) {
@@ -308,6 +298,7 @@ function dispatchSendButtonClick() {
 
 function getPreparationPlan(editor) {
   const currentText = getEditorText(editor).replace(/\u200b/g, "").trim();
+  console.log("[Douyin Suffix Helper] User input detected:", currentText);
   if (!currentText) {
     return null;
   }
