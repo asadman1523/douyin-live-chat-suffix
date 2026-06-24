@@ -95,6 +95,21 @@ function getTextNodeSnapshot(editor) {
     .join("\u0000");
 }
 
+function safeInsertText(target, value) {
+  const inputEvent = new InputEvent("beforeinput", {
+    bubbles: true,
+    cancelable: true,
+    inputType: "insertText",
+    data: value
+  });
+
+  if (target.dispatchEvent(inputEvent)) {
+    return document.execCommand("insertText", false, value);
+  }
+
+  return true;
+}
+
 function replaceTextRange(node, startOffset, endOffset, value) {
   const range = document.createRange();
   range.setStart(node, startOffset);
@@ -104,7 +119,7 @@ function replaceTextRange(node, startOffset, endOffset, value) {
   selection.removeAllRanges();
   selection.addRange(range);
 
-  return document.execCommand("insertText", false, value);
+  return safeInsertText(node, value);
 }
 
 function waitForEditorUpdate() {
@@ -140,7 +155,7 @@ async function replaceEditorText(editor, value) {
   // to observe the browser range before issuing the native replacement.
   await waitForEditorUpdate();
 
-  return document.execCommand("insertText", false, value);
+  return safeInsertText(editor, value);
 }
 
 function findLastConversion(editor) {
@@ -220,7 +235,7 @@ function placeCursorAtEnd(editor) {
 
 function appendSuffix(editor, suffix) {
   placeCursorAtEnd(editor);
-  return document.execCommand("insertText", false, suffix);
+  return safeInsertText(editor, suffix);
 }
 
 function editorEndsWith(editor, suffix) {
