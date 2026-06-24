@@ -1,4 +1,4 @@
-# 抖音直播发言自动后缀助手 (Douyin Live Chat Suffix Helper)
+# 抖音直播发言自动后缀与繁转简助手 (Douyin Live Chat Suffix & Converter)
 
 一個輕量、高效的 Google Chrome 瀏覽器外掛，專門為抖音直播網頁版設計。送出聊天訊息時，它能自動追加選定後綴，並可在瀏覽器本機將繁體字轉換為簡體字。
 
