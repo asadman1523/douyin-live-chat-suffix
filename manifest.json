@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "抖音直播发言自动后缀",
-  "version": "1.2",
+  "version": "1.2.2",
   "description": "在抖音直播发言送出时自动添加预设后缀，并可在本机转换为简体中文。",
   "permissions": [
     "storage"

@@ -96,6 +96,7 @@ function getTextNodeSnapshot(editor) {
 }
 
 function safeInsertText(target, value) {
+  console.log(`[Douyin Suffix Helper] safeInsertText called with value: "${value}"`);
   const inputEvent = new InputEvent("beforeinput", {
     bubbles: true,
     cancelable: true,
@@ -104,13 +105,16 @@ function safeInsertText(target, value) {
   });
 
   if (target.dispatchEvent(inputEvent)) {
+    console.log("[Douyin Suffix Helper] beforeinput event NOT canceled, calling execCommand");
     return document.execCommand("insertText", false, value);
   }
 
+  console.log("[Douyin Suffix Helper] beforeinput event canceled by Slate, assuming successful intercept");
   return true;
 }
 
-function replaceTextRange(node, startOffset, endOffset, value) {
+async function replaceTextRange(node, startOffset, endOffset, value) {
+  console.log(`[Douyin Suffix Helper] replaceTextRange: replacing offset ${startOffset}-${endOffset} with "${value}"`);
   const range = document.createRange();
   range.setStart(node, startOffset);
   range.setEnd(node, endOffset);
@@ -118,6 +122,10 @@ function replaceTextRange(node, startOffset, endOffset, value) {
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
+
+  console.log("[Douyin Suffix Helper] Waiting for Slate to sync selection...");
+  await waitForEditorUpdate();
+  console.log("[Douyin Suffix Helper] Slate sync done. Calling safeInsertText...");
 
   return safeInsertText(node, value);
 }
@@ -196,14 +204,18 @@ function findLastConversion(editor) {
 // Replacing a complete Slate text node can be partially reverted by React.
 // Convert one character from the end at a time and verify every mutation.
 async function convertEditorText(editor) {
+  console.log("[Douyin Suffix Helper] convertEditorText started.");
   for (let replacements = 0; replacements < 500; replacements += 1) {
     const conversion = findLastConversion(editor);
     if (!conversion) {
+      console.log("[Douyin Suffix Helper] No more conversions found.");
       return true;
     }
 
+    console.log(`[Douyin Suffix Helper] Found conversion: "${conversion.original}" -> "${conversion.converted}" at ${conversion.startOffset}`);
     const beforeSnapshot = getTextNodeSnapshot(editor);
-    if (!replaceTextRange(
+    console.log("[Douyin Suffix Helper] Snapshot before conversion:", beforeSnapshot);
+    if (!await replaceTextRange(
       conversion.node,
       conversion.startOffset,
       conversion.endOffset,
@@ -214,7 +226,10 @@ async function convertEditorText(editor) {
     }
 
     await waitForEditorUpdate();
-    if (getTextNodeSnapshot(editor) === beforeSnapshot) {
+    const afterSnapshot = getTextNodeSnapshot(editor);
+    console.log("[Douyin Suffix Helper] Snapshot after conversion:", afterSnapshot);
+    
+    if (afterSnapshot === beforeSnapshot) {
       console.error("[Douyin Suffix Helper] Editor did not accept text conversion.");
       return false;
     }
