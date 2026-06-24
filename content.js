@@ -310,12 +310,15 @@ async function prepareAndSend(editor, plan) {
   isSending = true;
   editor.focus();
 
+  const currentText = getEditorText(editor);
+  const hasSurrogatePairs = Array.from(currentText).length !== currentText.length;
   const hasImageContent = Boolean(editor.querySelector("img"));
+  const isComplexContent = hasImageContent || hasSurrogatePairs;
 
   // A single native edit is the most reliable way to update Slate's internal
   // value. Use it for normal text messages so conversion and suffix insertion
   // cannot be split across competing React updates.
-  if (!hasImageContent && (plan.needsConversion || plan.needsSuffix)) {
+  if (!isComplexContent && (plan.needsConversion || plan.needsSuffix)) {
     if (!await replaceEditorText(editor, plan.finalText)) {
       isSending = false;
       console.error("[Douyin Suffix Helper] Browser rejected message replacement.");
@@ -339,7 +342,7 @@ async function prepareAndSend(editor, plan) {
     }
   }
 
-  if (hasImageContent && plan.needsSuffix) {
+  if (isComplexContent && plan.needsSuffix) {
     if (!appendSuffix(editor, plan.outgoingSuffix)) {
       isSending = false;
       console.error("[Douyin Suffix Helper] Browser rejected suffix insertion.");
