@@ -157,7 +157,7 @@ function dispatchSendButtonClick() {
 }
 
 function getPreparationPlan(editor) {
-  const currentText = getEditorText(editor).replace(/\u200b/g, "").trim();
+  const currentText = getEditorText(editor).replace(/\u200b/g, "");
   if (!currentText) {
     return null;
   }
@@ -169,7 +169,7 @@ function getPreparationPlan(editor) {
     : currentText;
   const needsConversion = settings.convertToSimplified && hasTraditionalText(editor);
   const needsSuffix = settings.enabled &&
-    !comparableText.endsWith(outgoingSuffix.trim());
+    !comparableText.endsWith(outgoingSuffix);
 
   return {
     currentText,
